@@ -1,24 +1,34 @@
 devtools::install_github("nickpoison/astsa")
 require(astsa)
 require(penalized)
+require(ggplot2)
+require(reshape)
 
 # Generate Data
 set.seed(999)
 num = 100
 N = num+1
-x = arima.sim(n=N, list(ar = c(.7), sd=1))
-y = ts(x[-1] + rnorm(num,0,1))
+phi = 0.7
+sigma_epsilon = 1
+sigma_alpha = 1
+x = arima.sim(n=N, list(ar = c(phi), sd=sigma_epsilon))
+y = ts(x[-1] + rnorm(num, 0, sigma_alpha))
+
+# set up inputs
 transition_func <- function(y_t, y_tm1){
-  return(dnorm(y_t, 0.3*y_tm1, 1, log=TRUE))
+  return(dnorm(y_t, phi*y_tm1, sigma_epsilon, log=TRUE))
 }
 obs_func <- function(s, x) {
-  return(dnorm(x, s, 1, log=TRUE))
+  return(dnorm(x, s, sigma_alpha, log=TRUE))
 }
+
 adp <- function(y, transition_func, obs_func, freqs=c(1,2,3), iter=100){
-  #estimate AR(1) parameters for different frequencies of data
+  
+  # estimate AR(1) parameters and Kalman filter for different frequencies of data
   ar1_params = list()
   xs = list()
   Ps = list()
+  
   for(i in 1:length(freqs)){
     y_freq = ts(y[seq(1, num, freqs[i])])
     ar1_params[[i]] = estimate_params(y_freq)
@@ -26,32 +36,35 @@ adp <- function(y, transition_func, obs_func, freqs=c(1,2,3), iter=100){
                   Sigma0=(ar1_params[[i]]['sigw', 'estimate']^2/(1-ar1_params[[i]]['phi', 'estimate']^2)),
                   ar1_params[[i]]['phi', 'estimate'], ar1_params[[i]]['sigw', 'estimate'],
                   ar1_params[[i]]['sigv', 'estimate'])
+    
     xs[[i]] = rep(kf$xp, 1, each=freqs[i])[1:num]
-    # print(length(xs[[i]]))
     Ps[[i]] = rep(kf$Pp, 1, each=freqs[i])[1:num]
-    # print(length(Ps[[i]]))
 
   }
-  # print(xs)
-  # initialize approximation to return 0
+
+    # initialize approximation with no data
   df = list(data.frame(v=numeric(0), ar1=numeric(0),  ar2=numeric(0), ar3=numeric(0)))
   V = rep(df, length(y))
 
 
   S = data.frame(matrix(0, length(y), iter))
   for(i in 1:iter){
+    
+    # Select random final state
     S[length(y), i] = rnorm(1, 0, 2)
-    # print(S[length(y), i])
 
     for(j in length(y):2){
+      
+      # if insufficient data is available for regression, select random coefficients
+      # otherwise, fit coefficients to the data
       if(nrow(V[[j-1]]) < 10) {
-        coefs = c(runif(1,0,1),runif(1,0,1),runif(1,0,1))
+        coefs = c(runif(1,0,1), runif(1,0,1), runif(1,0,1))
       } else {
         # coefs = coefficients(penalized(v, ~ ar1 + ar2 + ar3, ~0,
         #                   positive = c(T, T, T), data=V[[j]]))
         coefs = lm(v~ar1+ar2+ar3-1, data=V[[j]])$coefficients
       }
-      print(coefs)
+
       max_func <- function(s){
         # print(log(coefs[1] * dnorm(s, xs[[1]][j-1], sqrt(Ps[[1]][j-1])) +
         #             coefs[2] * dnorm(s, xs[[2]][j-1], sqrt(Ps[[2]][j-1])) +
@@ -68,10 +81,7 @@ adp <- function(y, transition_func, obs_func, freqs=c(1,2,3), iter=100){
                                         ar2=dnorm(S[j, i], xs[[2]][j-1], sqrt(Ps[[2]][j-1])),
                                         ar3=dnorm(S[j, i], xs[[3]][j-1], sqrt(Ps[[3]][j-1]))))
     }
-
-
   }
-
   return(list(V, xs, Ps, S))
 }
 
@@ -97,9 +107,15 @@ estimate_params <- function(y) {
 
   # Estimation
   # print(init.par)
-  (est = optim(init.par, Linn, gr=NULL, method="BFGS", hessian=TRUE, control=list(trace=1,REPORT=1)))
+  (est = optim(init.par, Linn, gr=NULL, method="BFGS", hessian=TRUE))
   SE = sqrt(diag(solve(est$hessian)))
   return(data.frame(cbind(estimate=c(phi=est$par[1],sigw=est$par[2],sigv=est$par[3]), SE)))
 }
 
+
+results = adp(y, transition_func, obs_func)
+
+results_df = data.frame(kf=results[[2]][[1]], adp=results[[4]]$X100, states=x[-1], t=seq(1, num, 1))
+results_df = melt(results_df, id=c('t'))
+ggplot(data=results_df, aes(x=t, y=value, col=variable)) + geom_line()
 
