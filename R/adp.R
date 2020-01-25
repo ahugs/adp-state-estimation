@@ -46,6 +46,8 @@ adp <- function(y, transition_func, obs_func, freqs=c(1,2,3), iter=100){
   df = list(data.frame(v=numeric(0), ar1=numeric(0),  ar2=numeric(0), ar3=numeric(0)))
   V = rep(df, length(y))
 
+  coefs = list(data.frame(ar1=numeric(0),  ar2=numeric(0), ar3=numeric(0)))
+  coefs = rep(coefs, length(y))
 
   S = data.frame(matrix(0, length(y), iter))
   for(i in 1:iter){
@@ -60,9 +62,9 @@ adp <- function(y, transition_func, obs_func, freqs=c(1,2,3), iter=100){
       if(nrow(V[[j-1]]) < 10) {
         coefs = c(runif(1,0,1), runif(1,0,1), runif(1,0,1))
       } else {
-        # coefs = coefficients(penalized(v, ~ ar1 + ar2 + ar3, ~0,
+        # coefs[[j]][i, ] = coefficients(penalized(v, ~ ar1 + ar2 + ar3, ~0,
         #                   positive = c(T, T, T), data=V[[j]]))
-        coefs = lm(v~ar1+ar2+ar3-1, data=V[[j]])$coefficients
+        coefs[[j]][i, ] = lm(v~ar1+ar2+ar3-1, data=V[[j]])$coefficients
       }
 
       max_func <- function(s){
@@ -70,9 +72,9 @@ adp <- function(y, transition_func, obs_func, freqs=c(1,2,3), iter=100){
         #             coefs[2] * dnorm(s, xs[[2]][j-1], sqrt(Ps[[2]][j-1])) +
         #             coefs[3] * dnorm(s, xs[[3]][j-1], sqrt(Ps[[3]][j-1]))))
         -transition_func(S[j, i], s) - obs_func(S[j, i], y[j]) -
-          log(coefs[1] * dnorm(s, xs[[1]][j-1], sqrt(Ps[[1]][j-1])) +
-                coefs[2] * dnorm(s, xs[[2]][j-1], sqrt(Ps[[2]][j-1])) +
-                coefs[3] * dnorm(s, xs[[3]][j-1], sqrt(Ps[[3]][j-1])))
+          log(coefs[[j]][i, 1] * dnorm(s, xs[[1]][j-1], sqrt(Ps[[1]][j-1])) +
+                coefs[[j]][i, 2] * dnorm(s, xs[[2]][j-1], sqrt(Ps[[2]][j-1])) +
+                coefs[[j]][i, 3] * dnorm(s, xs[[3]][j-1], sqrt(Ps[[3]][j-1])))
       }
       opt = optim(S[j, i], max_func, method='Brent', lower=-10, upper=10)
       S[j - 1, i] = opt$par
@@ -82,7 +84,7 @@ adp <- function(y, transition_func, obs_func, freqs=c(1,2,3), iter=100){
                                         ar3=dnorm(S[j, i], xs[[3]][j-1], sqrt(Ps[[3]][j-1]))))
     }
   }
-  return(list(V, xs, Ps, S))
+  return(list(V, xs, Ps, S, coefs))
 }
 
 # Initial Estimates
