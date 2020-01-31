@@ -57,15 +57,11 @@ adp <- function(y, transition_func, obs_func, freqs=c(1,2,3), iter=100){
 
     for(j in length(y):2){
       
-      # if insufficient data is available for regression, select random coefficients
-      # otherwise, fit coefficients to the data
       if(nrow(V[[j-1]]) < 10) {
         coefs[[j]][i, ] = c(NA, NA, NA)
-        S[j - 1, i] = rnorm(1, 0, 2)
-        V[[j]] = rbind(V[[j]], data.frame(v=exp(transition_func(S[j, i], S[j - 1, i]) + obs_func(S[j, i], y[j])),
-                                          ar1=dnorm(S[j, i], xs[[1]][j-1], sqrt(Ps[[1]][j-1])),
-                                          ar2=dnorm(S[j, i], xs[[2]][j-1], sqrt(Ps[[2]][j-1])),
-                                          ar3=dnorm(S[j, i], xs[[3]][j-1], sqrt(Ps[[3]][j-1]))))
+        max_func <- function(s){
+          -transition_func(S[j, i], s) - obs_func(S[j, i], y[j])
+        }
       } else {
         coefs[[j]][i, ] = glm(v~ar1+ar2+ar3-1, family=quasibinomial, data=V[[j]])$coefficients
 
@@ -76,14 +72,15 @@ adp <- function(y, transition_func, obs_func, freqs=c(1,2,3), iter=100){
                   coefs[[j]][i, 3] * dnorm(s, xs[[3]][j-1], sqrt(Ps[[3]][j-1]))
           -transition_func(S[j, i], s) - obs_func(S[j, i], y[j]) -log(exp(theta)/(1+exp(theta)))
         }
-        opt = optim(S[j, i], max_func, method='Brent', lower=-10, upper=10)
-        S[j - 1, i] = opt$par
-      
-        V[[j]] = rbind(V[[j]], data.frame(v=exp(-opt$value),
-                                          ar1=dnorm(S[j, i], xs[[1]][j-1], sqrt(Ps[[1]][j-1])),
-                                          ar2=dnorm(S[j, i], xs[[2]][j-1], sqrt(Ps[[2]][j-1])),
-                                          ar3=dnorm(S[j, i], xs[[3]][j-1], sqrt(Ps[[3]][j-1]))))
       }
+      opt = optim(S[j, i], max_func, method='Brent', lower=-10, upper=10)
+      S[j - 1, i] = opt$par
+    
+      V[[j]] = rbind(V[[j]], data.frame(v=exp(-opt$value),
+                                        ar1=dnorm(S[j, i], xs[[1]][j-1], sqrt(Ps[[1]][j-1])),
+                                        ar2=dnorm(S[j, i], xs[[2]][j-1], sqrt(Ps[[2]][j-1])),
+                                        ar3=dnorm(S[j, i], xs[[3]][j-1], sqrt(Ps[[3]][j-1]))))
+      
     }
   }
   return(list(V, xs, Ps, S, coefs))
