@@ -51,16 +51,17 @@ adp <- function(y, transition_func, obs_func, freqs=c(1,2,3), iter=100){
 
   S = data.frame(matrix(0, length(y), iter))
   for(i in 1:iter){
-    
+
     # Select random final state
     S[length(y), i] = rnorm(1, 0, 2)
 
     for(j in length(y):2){
-      
+
       if(nrow(V[[j-1]]) < 10) {
         coefs[[j]][i, ] = c(NA, NA, NA)
         max_func <- function(s){
-          -transition_func(S[j, i], s) - obs_func(S[j, i], y[j])
+          -transition_func(S[j, i], s) - obs_func(S[j, i], y[j]) -
+          dnorm(s, xs[[1]][j-1], sqrt(Ps[[1]][j-1]), log=TRUE)
         }
       } else {
         coefs[[j]][i, ] = glm(v~ar1+ar2+ar3-1, family=quasibinomial, data=V[[j]])$coefficients
