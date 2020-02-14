@@ -121,7 +121,23 @@ estimate_params <- function(y) {
 
 results = adp(y, transition_func, obs_func)
 
-results_df = data.frame(kf=results[[2]][[1]], adp=results[[4]]$X100, states=x[-1], t=seq(1, num, 1))
+results_df = data.frame(kf=results[[2]][[1]], adp=results[[4]][, ncol(results[[4]])], states=x[-1], t=seq(1, num, 1))
 results_df = melt(results_df, id=c('t'))
 ggplot(data=results_df, aes(x=t, y=value, col=variable)) + geom_line()
 
+mse = c()
+for(i in 1:ncol(results[[4]])){
+  mse = c(mse, sum((results[[4]][, i] - x[-1])^2)/length(results[[4]][, i]))
+}
+
+mse_plot_df = data.frame(adp=mse, kf=rep((results[[2]][[1]]- x[-1])^2/length(mse), length(mse)),
+                         mean=rep(mean(y), length(mse)), iter=seq(1, length(mse)))
+mse_plot_df = melt(mse_plot_df, id='iter')
+colnames(mse_plot_df) = c('iter', 'model', 'mse')
+ggplot(data=mse_plot_df, aes(x=iter, y=mse, col=model))+geom_line()
+
+model = glm(v~ar1+ar2+ar3-1, family=quasibinomial, data=results[[1]][[100]][1:50,])
+temp_df = data.frame(predict=predict(model, type='response', newdata=results[[1]][[100]][1:100,]), 
+                     actual=results[[1]][[100]][1:100,]$v, id=seq(1,100))
+temp_df=melt(temp_df, id='id')
+ggplot(data=temp_df, aes(x=id, y=value, col=variable))+geom_line()
