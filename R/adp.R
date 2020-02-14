@@ -46,45 +46,49 @@ adp <- function(y, transition_func, obs_func, freqs=c(1,2,3), iter=100){
   df = list(data.frame(v=numeric(0), ar1=numeric(0),  ar2=numeric(0), ar3=numeric(0)))
   V = rep(df, length(y))
 
-  coefs = list(data.frame(ar1=numeric(0),  ar2=numeric(0), ar3=numeric(0)))
-  coefs = rep(coefs, length(y))
-
   S = data.frame(matrix(0, length(y), iter))
+  models=replicate(iter, list())
   for(i in 1:iter){
 
     # Select random final state
-    S[length(y), i] = rnorm(1, 0, 2)
+    S[length(y), i] = rnorm(1, 0, 1)
 
     for(j in length(y):2){
 
-      if(nrow(V[[j-1]]) < 10) {
-        coefs[[j]][i, ] = c(NA, NA, NA)
+      if(nrow(V[[j]]) < 10) {
+        models[[i]][[j]] = NA
         max_func <- function(s){
           -transition_func(S[j, i], s) - obs_func(S[j, i], y[j]) -
           dnorm(s, xs[[1]][j-1], sqrt(Ps[[1]][j-1]), log=TRUE)
         }
       } else {
-        coefs[[j]][i, ] = glm(v~ar1+ar2+ar3-1, family=quasibinomial, data=V[[j]])$coefficients
+        models[[i]][[j]] = glm(v~ar1+ar2+ar3-1, family=quasibinomial, data=V[[j]])
 
         max_func <- function(s){
 
-          theta = coefs[[j]][i, 1] * dnorm(s, xs[[1]][j-1], sqrt(Ps[[1]][j-1])) +
-                  coefs[[j]][i, 2] * dnorm(s, xs[[2]][j-1], sqrt(Ps[[2]][j-1])) +
-                  coefs[[j]][i, 3] * dnorm(s, xs[[3]][j-1], sqrt(Ps[[3]][j-1]))
-          -transition_func(S[j, i], s) - obs_func(S[j, i], y[j]) -log(exp(theta)/(1+exp(theta)))
+          predict_df = data.frame(ar1=dnorm(s, xs[[1]][j-1], sqrt(Ps[[1]][j-1])),
+                                  ar2=dnorm(s, xs[[2]][j-1], sqrt(Ps[[2]][j-1])),
+                                  ar3=dnorm(s, xs[[3]][j-1], sqrt(Ps[[3]][j-1])))
+          -transition_func(S[j, i], s) - obs_func(S[j, i], y[j]) -log(predict(models[[i]][[j]], newdata=predict_df, 
+                                                                              type='response'))
+          
         }
       }
-      opt = optim(S[j, i], max_func, method='Brent', lower=-10, upper=10)
+      opt = optim(S[j, i], max_func, method='Brent', lower=-5, upper=5)
       S[j - 1, i] = opt$par
+      predict_df = data.frame(ar1=dnorm(S[j - 1, i], xs[[1]][j-1], sqrt(Ps[[1]][j-1])),
+                              ar2=dnorm(S[j - 1, i], xs[[2]][j-1], sqrt(Ps[[2]][j-1])),
+                              ar3=dnorm(S[j - 1, i], xs[[3]][j-1], sqrt(Ps[[3]][j-1])))
+      
     
       V[[j]] = rbind(V[[j]], data.frame(v=exp(-opt$value),
-                                        ar1=dnorm(S[j, i], xs[[1]][j-1], sqrt(Ps[[1]][j-1])),
-                                        ar2=dnorm(S[j, i], xs[[2]][j-1], sqrt(Ps[[2]][j-1])),
-                                        ar3=dnorm(S[j, i], xs[[3]][j-1], sqrt(Ps[[3]][j-1]))))
+                                        ar1=dnorm(S[j, i], xs[[1]][j], sqrt(Ps[[1]][j])),
+                                        ar2=dnorm(S[j, i], xs[[2]][j], sqrt(Ps[[2]][j])),
+                                        ar3=dnorm(S[j, i], xs[[3]][j], sqrt(Ps[[3]][j]))))
       
     }
   }
-  return(list(V, xs, Ps, S, coefs))
+  return(list(V, xs, Ps, S, models, ar1_params))
 }
 
 # Initial Estimates
