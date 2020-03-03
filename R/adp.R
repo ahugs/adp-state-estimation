@@ -3,6 +3,7 @@ require(astsa)
 require(penalized)
 require(ggplot2)
 require(reshape)
+require(glmnet)
 
 # Generate Data
 set.seed(999)
@@ -52,7 +53,7 @@ adp <- function(y, transition_func, obs_func, freqs=c(1,2,3), iter=100){
 
   S = data.frame(matrix(0, length(y), iter))
   models=replicate(iter, list())
-  obs_llike = obs_likelihood(phi, sigv, sigw, y)
+  obs_llike = obs_likelihood(phi, sigv, sigw, y, log=T)
   for(i in 1:iter){
 
     # Select random final state
@@ -63,35 +64,36 @@ adp <- function(y, transition_func, obs_func, freqs=c(1,2,3), iter=100){
         models[[i]][[j-1]] = NA
         max_func <- function(s){
           -transition_func(S[j, i], s) - obs_func(S[j, i], y[j]) -
-            log(sample_states(xtt[[1]], Ptt[[1]], xttm1[[1]], Pttm1[[1]], s, j-1)[[4]] *
-            obs_llike[j-1])
+            sample_states(xtt[[1]], Ptt[[1]], xttm1[[1]], Pttm1[[1]], s, j-1, log=T)[[4]] -
+            obs_llike[j-1]
             
         }
       } else {
-        models[[i]][[j-1]] = glm(v~ar1 + ar2 +ar3 -1, family=quasibinomial, data=V[[j-1]])
+        models[[i]][[j-1]] = cv.glmnet(x=data.matrix(V[[j-1]][, c('ar1', 'ar2', 'ar3')]), y=V[[j-1]]$v, family='gaussian',
+                                       nfolds=5)
         max_func <- function(s){
 
-          predict_df = data.frame(ar1=sample_states(xtt[[1]], Ptt[[1]], xttm1[[1]], Pttm1[[1]], s, j-1)[[4]] * 
+          predict_df = data.frame(ar1=sample_states(xtt[[1]], Ptt[[1]], xttm1[[1]], Pttm1[[1]], s, j-1, log=T)[[4]] + 
                                     obs_llike[j-1],
-                                  ar2=sample_states(xtt[[2]], Ptt[[2]], xttm1[[2]], Pttm1[[2]], s, j-1)[[4]] * 
+                                  ar2=sample_states(xtt[[2]], Ptt[[2]], xttm1[[2]], Pttm1[[2]], s, j-1, log=T)[[4]] + 
                                     obs_llike[j-1],
-                                  ar3=sample_states(xtt[[3]], Ptt[[3]], xttm1[[3]], Pttm1[[3]], s, j-1)[[4]] * 
-                                    obs_llike[j-1])
-          -transition_func(S[j, i], s) - obs_func(S[j, i], y[j])  - log(predict(models[[i]][[j-1]], newdata=predict_df,
-                                                                            type='response'))
+                                  ar3=sample_states(xtt[[3]], Ptt[[3]], xttm1[[3]], Pttm1[[3]], S[j, i], j, log=T)[[4]] +
+                                    obs_llike[j])
+
+          -transition_func(S[j, i], s) - obs_func(S[j, i], y[j])  - predict(models[[i]][[j-1]], newx=data.matrix(predict_df),
+                                                                            type='response')
           
         }
       }
       opt = optim(S[j, i], max_func, method='Brent', lower=-5, upper=5)
       S[j - 1, i] = opt$par
       
-    
-      V[[j]] = rbind(V[[j]], data.frame(v=exp(-opt$value),
-                                        ar1=sample_states(xtt[[1]], Ptt[[1]], xttm1[[1]], Pttm1[[1]], S[j, i], j)[[4]] *
+      V[[j]] = rbind(V[[j]], data.frame(v=c(-opt$value),
+                                        ar1=sample_states(xtt[[1]], Ptt[[1]], xttm1[[1]], Pttm1[[1]], S[j, i], j, log=T)[[4]] +
                                           obs_llike[j],
-                                        ar2=sample_states(xtt[[2]], Ptt[[2]], xttm1[[2]], Pttm1[[2]], S[j, i], j)[[4]] *
+                                        ar2=sample_states(xtt[[2]], Ptt[[2]], xttm1[[2]], Pttm1[[2]], S[j, i], j, log=T)[[4]] +
                                           obs_llike[j],
-                                        ar3=sample_states(xtt[[3]], Ptt[[3]], xttm1[[3]], Pttm1[[3]], S[j, i], j)[[4]] * 
+                                        ar3=sample_states(xtt[[3]], Ptt[[3]], xttm1[[3]], Pttm1[[3]], S[j, i], j, log=T)[[4]] +
                                           obs_llike[j])
                      
                      )
