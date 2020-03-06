@@ -3,6 +3,7 @@ require(astsa)
 require(penalized)
 require(ggplot2)
 require(reshape)
+require(mvtnorm)
 
 # Generate Data
 set.seed(999)
@@ -28,8 +29,8 @@ model_averaging <- function(freqs=c(1,2,3)) {
       y_freq = ts(y[seq(j, num, freqs[i])])
       params_estimate = estimate_params(y_freq)
       ar1_params[[i]][[j]] = params_estimate[[1]]
-      max_llike = -params_estimate[[2]]
-      bic[[i]][[j]] = bic(max_llike, length(y_freq), 3)
+      #max_llike = -params_estimate[[2]]
+      bic[[i]][[j]] = -posterior_prob(params_estimate, length(y_freq))#bic(max_llike, length(y_freq), 3)
       states[[i]][[j]] = rep(NA, length(y))
       states[[i]][[j]][seq(j, num, freqs[i])] = 
         c(Ksmooth0(length(y_freq), y_freq, A=1, mu0=0, Sigma0=1, ar1_params[[i]][[j]]['phi', 'estimate'], 
@@ -53,6 +54,19 @@ bic <- function(max_llike, n, k){
   return(-max_llike/n)
 }
 
+posterior_prob <- function(params_estimate, n) {
+  rparams_df = data.frame(rmvnorm(n=1000, mean=params_estimate[[1]][, 'estimate'], sigma=params_estimate[[2]]))
+  colnames(rparams_df) = rownames(params_estimate[[1]])
+  Linn=function(para){
+       phi = para[1]; sigw = para[2]; sigv = para[3]
+       Sigma0 = (sigw^2)/(1-phi^2); Sigma0[Sigma0<0]=0
+       kf = Kfilter0(length(y),y,1,mu0=0,Sigma0,phi,sigw,sigv)
+       return(kf$like)
+   }
+  return(mean(apply(rparams_df, MARGIN=1, FUN=Linn)/n))
+  
+}
+
 estimate_params <- function(y) {
   u = ts.intersect(y, lag(y,-1), lag(y,-2))
   varu = var(u)
@@ -63,8 +77,7 @@ estimate_params <- function(y) {
   # print(paste('varu ', varu[1,1]))
   # print(paste('rrac ', q/(1-phi^2)))
   (init.par = c(phi, sqrt(q), sqrt(r)))
-  print(init.par)
-  
+
   # Function to evaluate the likelihood
   Linn=function(para){
     phi = para[1]; sigw = para[2]; sigv = para[3]
@@ -76,8 +89,9 @@ estimate_params <- function(y) {
   # Estimation
   # print(init.par)
   (est = optim(init.par, Linn, gr=NULL, method="BFGS", hessian=TRUE))
-  SE = sqrt(diag(solve(est$hessian)))
-  return(list(data.frame(cbind(estimate=c(phi=est$par[1],sigw=est$par[2],sigv=est$par[3]), SE)), est$value))
+  inv_hessian = solve(est$hessian)
+  SE = sqrt(diag(inv_hessian))
+  return(list(data.frame(cbind(estimate=c(phi=est$par[1],sigw=est$par[2],sigv=est$par[3]), SE)), inv_hessian))
 }
 
 results = model_averaging()
