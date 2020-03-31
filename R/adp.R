@@ -15,10 +15,34 @@ sigv = 1
 x = arima.sim(n=N, list(ar = c(phi), sd=sigw))
 y = ts(x[-1] + rnorm(num, 0, sigv))
 
+SEIR <- function(S_0, E_0, I_0, R_0, n, alpha, gamma, beta, sig_g, sig_y){
+  pop_N = S_0 + E_0 + I_0 + R_0
+  S = rep(NA, n); S[1] = S_0
+  E = rep(NA, n); E[1] = E_0
+  I = rep(NA, n); I[1] = I_0
+  R = rep(NA, n); R[1] = R_0
+  g = rep(NA, n)
+  y = rep(NA, n)
+  
+  for(i in 2:n){
+    g[i] = alpha * E[i-1]/I[i-1] - gamma + rnorm(1, 0, sig_g)
+    y[i] = g[i] + rnorm(1, 0, sig_y)
+    I[i] = (1 + g[i])*I[i-1]
+    S[i] = S[i-1] - beta*S[i-1]*I[i-1]/pop_N
+    E[i] = E[i-1] + beta*S[i-1]*I[i-1]/pop_N - alpha*E[i-1]
+    R[i] = R[i-1] + gamma*I[i-1]
+  }
+  return(list(S, E, I, R, g, y))
+}
+
+SEIR(999, 0, 2, 0, 100, 2, 1.5, 1, 1, 1)
+
+
 # set up inputs
 transition_func <- function(y_t, y_tm1){
   return(dnorm(y_t, phi*y_tm1, sigw, log=TRUE))
 }
+
 obs_func <- function(s, x) {
   return(dnorm(x, s, sigv, log=TRUE))
 }
@@ -235,6 +259,7 @@ for(i in 1:ncol(results[[6]])){
 
 mse_plot_df = data.frame(adp=mse, kf=rep(sum((results[[2]][[1]]- x[-1])^2)/length(results[[2]][[1]]), length(mse)),
                          mean=rep(sum((mean(y) - x[-1])^2)/length(y), length(mse)), iter=seq(1, length(mse)))
+mse_plot_df = mse_plot_df[-seq(1, 20),]
 mse_plot_df = melt(mse_plot_df, id='iter')
 colnames(mse_plot_df) = c('iter', 'model', 'mse')
 ggplot(data=mse_plot_df, aes(x=iter, y=mse, col=model))+geom_line()
