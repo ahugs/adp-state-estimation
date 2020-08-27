@@ -4,6 +4,8 @@ require(ggplot2)
 require(reshape)
 require(mvtnorm)
 require(bsts)
+require(invgamma)
+require(mvtnorm)
 
 # Generate Data
 set.seed(999)
@@ -27,7 +29,7 @@ SEIR <- function(S_0, E_0, I_0, R_0, Tn, alpha, gamma, beta, sig_g, sig_y){
   R = rep(NA, Tn); R[1] = R_0
   g = rep(NA, Tn)
   y = rep(NA, Tn)
-  
+
   for(i in 2:Tn){
     g[i] = alpha * E[i-1]/I[i-1] - gamma + rnorm(1, 0, sig_g)
     y[i] = g[i] + rnorm(1, 0, sig_y)
@@ -77,8 +79,8 @@ model_averaging <- function(y, freqs=c(1,2,3)) {
       ar1_params[[i]][[j]] = params_estimate[['mu']]
       model_fit[[i]][[j]] = posterior_predictive(params_estimate, y_freq)
       states[[i]][[j]] = rep(NA, length(y))
-      states[[i]][[j]][seq(j, num, freqs[i])] = 
-        c(Ksmooth0(length(y_freq), y_freq, A=1, mu0=0, Sigma0=1, ar1_params[[i]][[j]]['phi', 'estimate'], 
+      states[[i]][[j]][seq(j, num, freqs[i])] =
+        c(Ksmooth0(length(y_freq), y_freq, A=1, mu0=0, Sigma0=1, ar1_params[[i]][[j]]['phi', 'estimate'],
                ar1_params[[i]][[j]]['sigw', 'estimate'], ar1_params[[i]][[j]]['sigv', 'estimate'])$xs)
 
     }
@@ -88,7 +90,7 @@ model_averaging <- function(y, freqs=c(1,2,3)) {
   states_df = data.frame(states)
   weighted_states = apply(states_df, MARGIN=1, FUN=function(row){sum(row * exp(-model_fits/2) * !is.na(row), na.rm=T)/
       sum(exp(-model_fits/2)  * !is.na(row))})
-  
+
   return (list(ar1_params=ar1_params, model_fit=model_fit, states=states, weighted_states=weighted_states))
 }
 
@@ -99,7 +101,7 @@ posterior_predictive <- function(params_estimate, y) {
   if(!isSymmetric(sigma)){
     sigma = apply(params_estimate[[2]], MARGIN=1:2, FUN=function(x) round(x, 6))
   }
-  
+
   rparams_df = data.frame(rmvnorm(n=1000, mean=params_estimate[['mu']][, 'estimate'], sigma=sigma))
   colnames(rparams_df) = rownames(params_estimate[['mu']])
   Linn=function(para){
@@ -109,7 +111,7 @@ posterior_predictive <- function(params_estimate, y) {
        return(kf$like)
    }
   return(mean(apply(rparams_df, MARGIN=1, FUN=Linn)/n))
-  
+
 }
 
 estimate_params <- function(y) {
@@ -128,12 +130,12 @@ estimate_params <- function(y) {
     kf = Kfilter0(length(y),y,1,mu0=0,Sigma0,phi,sigw,sigv)
     return(kf$like)
   }
-  
+
   # Estimation
   (est = optim(init.par, Linn, gr=NULL, method="BFGS", hessian=TRUE))
   inv_hessian = solve(est$hessian)
   SE = sqrt(diag(inv_hessian))
-  return(list(mu=data.frame(cbind(estimate=c(phi=est$par[1],sigw=est$par[2],sigv=est$par[3]), SE)), 
+  return(list(mu=data.frame(cbind(estimate=c(phi=est$par[1],sigw=est$par[2],sigv=est$par[3]), SE)),
               sigma=inv_hessian))
 }
 
@@ -145,7 +147,7 @@ x = seir[['g']][1:num]
 niter=500
 ar3_model<-bsts(y, AddAr(y=y, lags=3), niter=niter)
 
-plot_df = data.frame(model_averaging=results[['weighted_states']], 
+plot_df = data.frame(model_averaging=results[['weighted_states']],
                      true_states=x[2:length(x)], ksmooth=results[['states']][[1]][[1]],
                      ar3=ar3_model$state.contributions[niter,,],
                      t=seq(1, length(y)))
@@ -179,36 +181,36 @@ for(i in 1:100){
   beta = max(rnorm(1, 0.5, 0.5),0)
   sig_g = rinvgamma(1, 1.1, 0.005)
   sig_y = rinvgamma(1, 1.1, 0.05)
-  
+
   params_list[[i]]= list(alpha=alpha, gamma=gamma, beta=beta, sig_g=sig_g, sig_y=sig_y)
   seir_states = SEIR(S_0, E_0, I_0, R_0, num, alpha, gamma, beta, sig_g, sig_y)
-  
+
   y = seir_states[['y']][2:num]
   x = seir_states[['g']][1:num]
-  
-  
+
+
   results <- tryCatch(
     model_averaging(ts(y), freqs=c(1,2,3)),
     error=function(e) e
   )
-  
+
   niter=500
   ar3_model<-tryCatch(bsts(y, AddAr(y=y, lags=3), niter=niter),
                       error=function(e) e)
-  
-  
+
+
   if(!inherits(results, "error")){
-    results_df = data.frame(model_averaging=results[['weighted_states']], true_states=x[2:length(x)], 
+    results_df = data.frame(model_averaging=results[['weighted_states']], true_states=x[2:length(x)],
                             ksmooth=results[['states']][[1]][[1]])
     mse_model_averaging_list[[i]]=sum((results_df[, 'model_averaging'] - results_df[,'true_states'])^2)/length(results_df)
     mse_ksmooth_list[[i]]=sum((results_df[, 'ksmooth'] - results_df[,'true_states'])^2)/length(results_df)
 
   } else {
     mse_model_averaging_list[[i]] = NA
-    
+
     ksmooth_states = tryCatch(
       c(Ksmooth0(length(y), y, A=1, mu0=0, Sigma0=1, results[['ar1_params']][[1]][[1]]['phi', 'estimate'],
-                 results[['ar1_params']][[1]][[1]]['sigw', 'estimate'], 
+                 results[['ar1_params']][[1]][[1]]['sigw', 'estimate'],
                  results[['ar1_params']][[1]][[1]]['sigv', 'estimate'])$xs),
       error=function(e) e
 
@@ -221,7 +223,7 @@ for(i in 1:100){
       mse_ksmooth_list[[i]] = NA
     }
   }
-  
+
   if(!inherits(ar3_model, "error")){
     mse_ar3_list[[i]] = sum((ar3_model$state.contributions[niter,,] - results_df[,'true_states'])^2)/length(results_df)
   }
