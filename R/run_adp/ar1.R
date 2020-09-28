@@ -22,9 +22,18 @@ obs_func <- function(s, x) {
 }
 
 # Run ADP
-results = adp(y, transition_func, obs_func, freqs=c(1, 2))
+results = adp(y, transition_func, obs_func, rand_n=30)
 
-results_df = data.frame(kf=results[[2]][[1]], adp=results[[6]][, ncol(results[[6]])], states=x[-1], t=seq(1, N-1, 1))
+results = adp(y, transition_func, obs_func, freqs=c(1, 2),
+              covar_funcs=list(v1addv2=function(x){x[1] + x[2]}, v2minusv1=function(x){x[2]-x[1]}))
+
+
+ar1_params = estimate_params(y)
+kf = Kfilter0(length(y), y, 1, mu0=0,
+              Sigma0=(ar1_params['sigw', 'estimate']^2/(1-ar1_params['phi', 'estimate']^2)),
+              ar1_params['phi', 'estimate'], ar1_params['sigw', 'estimate'],
+              ar1_params['sigv', 'estimate'])
+results_df = data.frame(kf=c(kf$xf), adp=results[[6]][, ncol(results[[6]])], states=x[-1], t=seq(1, N-1, 1))
 results_df = melt(results_df, id=c('t'))
 ggplot(data=results_df, aes(x=t, y=value, col=variable)) + geom_line()
 

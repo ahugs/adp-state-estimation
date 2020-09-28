@@ -4,17 +4,12 @@ require(reshape)
 
 set.seed(999)
 N = 101
-sigv = 5
-x = cumsum(sample(c(0,-1,1), N, replace=TRUE))
+sigv = 1
+x = cumsum(rcauchy(N, 0, 0.1))
 y = ts(x[-1] + rnorm(N-1, 0, sigv))
 
 transition_func <- function(y_t, y_tm1){
-  if((y_t == y_tm1 + 1)|(y_t == y_tm1 - 1)|(y_t == y_tm1)){
-    return(log(1/3))
-  }
-  else {
-    return(log(0))
-  }
+  return(dcauchy(y_t-y_tm1, 0, 0.1))
 }
 
 obs_func <- function(s, x) {
@@ -22,7 +17,10 @@ obs_func <- function(s, x) {
 }
 
 # Run ADP
-results = adp(y, transition_func, obs_func, rand_n=3)
+start_time = Sys.time()
+results = adp(y, transition_func, obs_func, rand_n=3, prep_iter=15, iter=100)
+end_time = Sys.time()
+print(end_time-start_time)
 
 ar1_params = estimate_params(y)
 kf = Kfilter0(length(y), y, 1, mu0=0,

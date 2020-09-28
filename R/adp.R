@@ -2,8 +2,8 @@ devtools::install_github("nickpoison/astsa")
 require(astsa)
 require(glmnet)
 
-
-adp <- function(y, transition_func, obs_func, freqs=c(1,2,3), iter=100){
+adp <- function(y, transition_func, obs_func, freqs=NULL, rand_n=NULL,
+                covar_funcs=NULL, iter=100, prep_iter=10){
 
   N = length(y)
 
@@ -14,23 +14,47 @@ adp <- function(y, transition_func, obs_func, freqs=c(1,2,3), iter=100){
   xttm1 = list()
   Pttm1 = list()
 
-  for(i in 1:length(freqs)){
-    y_freq = ts(y[seq(1, N, freqs[i])])
-    ar1_params[[i]] = estimate_params(y_freq)
-    kf = Kfilter0(length(y_freq),y_freq,1,mu0=0,
-                  Sigma0=(ar1_params[[i]]['sigw', 'estimate']^2/(1-ar1_params[[i]]['phi', 'estimate']^2)),
-                  ar1_params[[i]]['phi', 'estimate'], ar1_params[[i]]['sigw', 'estimate'],
-                  ar1_params[[i]]['sigv', 'estimate'])
-
-    xtt[[i]] = rep(c(kf$xf), 1, each=freqs[i])[1:N]
-    Ptt[[i]] = rep(c(kf$Pf), 1, each=freqs[i])[1:N]
-    xttm1[[i]] = rep(c(kf$xp), 1, each=freqs[i])[1:N]
-    Pttm1[[i]] = rep(c(kf$Pp), 1, each=freqs[i])[1:N]
-
+  if(!is.null(freqs)){
+    for(i in 1:length(freqs)){
+      y_freq = ts(y[seq(1, N, freqs[i])])
+      ar1_params[[i]] = estimate_params(y_freq)
+      kf = Kfilter0(length(y_freq), y_freq, 1, mu0=0,
+                    Sigma0=(ar1_params[[i]]['sigw', 'estimate']^2/(1-ar1_params[[i]]['phi', 'estimate']^2)),
+                    ar1_params[[i]]['phi', 'estimate'], ar1_params[[i]]['sigw', 'estimate'],
+                    ar1_params[[i]]['sigv', 'estimate'])
+      xtt[[i]] = rep(c(kf$xf), 1, each=freqs[i])[1:N]
+      Ptt[[i]] = rep(c(kf$Pf), 1, each=freqs[i])[1:N]
+      xttm1[[i]] = rep(c(kf$xp), 1, each=freqs[i])[1:N]
+      Pttm1[[i]] = rep(c(kf$Pp), 1, each=freqs[i])[1:N]
+    }
   }
+  else if(!is.null(rand_n)) {
+      for(i in 1:rand_n){
+        temp = t(data.frame(sigw=rgamma(1,1,1), sigv=rgamma(1,1,1), phi=rnorm(1,0,0.4)))
+        colnames(temp) = 'estimate'
+        ar1_params[[i]] = temp
+        kf = Kfilter0(length(y), y, 1, mu0=0,
+                      Sigma0=(ar1_params[[i]]['sigw', 'estimate']^2/(1-ar1_params[[i]]['phi', 'estimate']^2)),
+                      ar1_params[[i]]['phi', 'estimate'], ar1_params[[i]]['sigw', 'estimate'],
+                      ar1_params[[i]]['sigv', 'estimate'])
+        xtt[[i]] = kf$xf
+        Ptt[[i]] = kf$Pf
+        xttm1[[i]] = kf$xp
+        Pttm1[[i]] = kf$Pp
+      }
+    }
 
   # initialize approximation with no data
-  df = list(data.frame(v=numeric(0), ar1=numeric(0),  ar2=numeric(0), ar3=numeric(0)))
+  v_N = length(ar1_params)
+  if(!is.null(covar_funcs)){
+    v_init = rep(list(v=numeric(0)), length(covar_funcs))
+    v_names = names(covar_funcs)
+  } else{
+    v_init = rep(list(v=numeric(0)), v_N)
+    v_names = paste(rep('v', v_N), seq(1, v_N), sep='')
+  }
+  names(v_init) <- v_names
+  df = list(data.frame(v=numeric(0), v_init))
   V = rep(df, length(y))
 
   S = data.frame(matrix(0, length(y), iter))
@@ -42,7 +66,7 @@ adp <- function(y, transition_func, obs_func, freqs=c(1,2,3), iter=100){
     S[length(y), i] = rnorm(1, 0, 1)
 
     for(j in length(y):2){
-      if(nrow(V[[j-1]]) < 10) {
+      if(nrow(V[[j-1]]) < prep_iter) {
         models[[i]][[j-1]] = NA
         max_func <- function(s){
           -transition_func(S[j, i], s) - obs_func(S[j, i], y[j]) -
@@ -51,34 +75,38 @@ adp <- function(y, transition_func, obs_func, freqs=c(1,2,3), iter=100){
 
         }
       } else {
-        models[[i]][[j-1]] = cv.glmnet(x=data.matrix(V[[j-1]][, c('ar1', 'ar2', 'ar3')]), y=V[[j-1]]$v, family='gaussian',
+        models[[i]][[j-1]] = cv.glmnet(x=data.matrix(V[[j-1]][, v_names]),
+                                       y=V[[j-1]]$v,
+                                       family='gaussian',
                                        nfolds=5)
         max_func <- function(s){
 
-          predict_df = data.frame(ar1=sample_states(xtt[[1]], Ptt[[1]], xttm1[[1]], Pttm1[[1]], s, j-1, log=T)[[4]] +
-                                    obs_llike[j-1],
-                                  ar2=sample_states(xtt[[2]], Ptt[[2]], xttm1[[2]], Pttm1[[2]], s, j-1, log=T)[[4]] +
-                                    obs_llike[j-1],
-                                  ar3=sample_states(xtt[[3]], Ptt[[3]], xttm1[[3]], Pttm1[[3]], S[j, i], j, log=T)[[4]] +
-                                    obs_llike[j])
+          covars = sapply(seq(1, v_N), function(v) {sample_states(xtt[[v]], Ptt[[v]], xttm1[[v]], Pttm1[[v]], s, j-1, log=T)[[4]] +
+              obs_llike[j-1]})
+          if(!is.null(covar_funcs)){
+            covars = sapply(covar_funcs, function(func){func(covars)})
+            names(covars) = names(covar_funcs)
+          } else {
+            names(covars) = v_names
+          }
+          predict_df = data.frame(as.list(covars))
 
           -transition_func(S[j, i], s) - obs_func(S[j, i], y[j])  - predict(models[[i]][[j-1]], newx=data.matrix(predict_df),
                                                                             type='response')
 
         }
       }
-      opt = optim(S[j, i], max_func, method='Brent', lower=-5, upper=5)
+      opt = optim(S[j, i], max_func, method='Brent', lower=-20, upper=20)
       S[j - 1, i] = opt$par
-
-      V[[j]] = rbind(V[[j]], data.frame(v=c(-opt$value),
-                                        ar1=sample_states(xtt[[1]], Ptt[[1]], xttm1[[1]], Pttm1[[1]], S[j, i], j, log=T)[[4]] +
-                                          obs_llike[j],
-                                        ar2=sample_states(xtt[[2]], Ptt[[2]], xttm1[[2]], Pttm1[[2]], S[j, i], j, log=T)[[4]] +
-                                          obs_llike[j],
-                                        ar3=sample_states(xtt[[3]], Ptt[[3]], xttm1[[3]], Pttm1[[3]], S[j, i], j, log=T)[[4]] +
-                                          obs_llike[j])
-
-                     )
+      covars = sapply(seq(1, v_N), function(v) {sample_states(xtt[[v]], Ptt[[v]], xttm1[[v]],
+                                                              Pttm1[[v]], S[j, i], j, log=T)[[4]] + obs_llike[j]})
+      if(!is.null(covar_funcs)){
+        covars = sapply(covar_funcs, function(func){func(covars)})
+        names(covars) = names(covar_funcs)
+      } else {
+        names(covars) = v_names
+      }
+      V[[j]] = rbind(V[[j]], data.frame(v=c(-opt$value), as.list(covars)))
 
     }
   }
