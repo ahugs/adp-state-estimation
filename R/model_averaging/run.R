@@ -172,6 +172,17 @@ for (state in c('S', 'E', 'I', 'R', 'g')){
                   model_averaging=rmse_model_averaging)
   df[!sapply(df,FUN = is.finite)] = NaN
 
+  clip_upper = quantile(df, 0.8, na.rm=TRUE)
+  print(clip_upper)
+  hist_df = melt(as.data.frame(apply(df, FUN=function(x) clamp(x, lower=-Inf, upper=clip_upper), MARGIN=2)))
+  hist_p <- ggplot(hist_df) + geom_histogram(aes(x=value, fill=variable, bins=40)) + facet_wrap(~variable)
+  hist_p <- hist_p + ggtitle(sprintf("RMSE Distribution of State %s", state))
+  print(hist_p)
+  ggsave(sprintf("%s/results/%d_%d_%d_%d_%d_%d_%.2f_%.2f_%.2f_%.2f_%.2f__%s/hist_%s.pdf",
+                 PATH, num, pop, I_0, S_0, E_0, R_0, alpha_mean, gamma_mean,
+                 beta_mean, sig_g, sig_y, format(as.Date(Sys.time()), "%Y%m%d"), state))
+
+
   mean_df = melt(apply(df, MARGIN=2, function(x) mean(x, na.rm=TRUE)))
   mean_df['model'] = row.names(mean_df)
   mean_p <- ggplot(mean_df, aes(x=model, y=value, fill=model)) + geom_bar(stat = 'identity', alpha=0.25)
@@ -214,3 +225,21 @@ for (state in c('S', 'E', 'I', 'R', 'g')){
 }
 
 
+
+PlotRun <- function(run_num, results) {
+  sim_plot_df = data.frame(S=results[[run_num]][['S']],
+                           E=results[[run_num]][['E']],
+                           I=results[[run_num]][['I']],
+                           R=results[[run_num]][['R']], run=1)
+  sim_plot_df['total'] = apply(sim_plot_df, MARGIN=1, FUN=sum)
+  sim_plot_df['t'] = rep(seq(1, nrow(sim_plot_df)), 1)
+  sim_plot_df = melt(sim_plot_df, id=c('t', 'run'))
+
+  return(ggplot(sim_plot_df, aes(y=value, x=t, col=variable)) + geom_line() +
+           facet_wrap(~ run, ncol=3))
+}
+
+ggplot(melt(data.frame(estimate=model_averaging_results[[2]][['g']],
+                       true=seir_list[[2]][['g']][-1],
+                       t=seq(1, num-1)), id.vars=c('t')),
+       aes(x=t, color=variable, y=value))+ geom_line()
