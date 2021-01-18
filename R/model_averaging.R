@@ -3,13 +3,21 @@ require(astsa)
 require(ggplot2)
 require(reshape)
 require(mvtnorm)
+# Sparse AR(1) model
+# try the linear interpolation of the states
+# try with a stable set of parameters for the simulations (look at the paper for equations on seeting initial params)
+# try solving for all the states after getting the kalman smoothed g states
+# Correlatoin parameter changing over time? Sequentially for all data up to and include current, or slices of the data
+
+# Try varying ratio of variances
+# filter outlier RMSE runs
 require(bsts)
 require(invgamma)
-require(mvtnorm)
+require(zoo)
 
 # Generate Data
 set.seed(999)
-num = 30
+num = 400
 N = num+1
 
 # AR Model
@@ -17,7 +25,7 @@ phi1 = 0.7
 phi2 = 0.2
 sigw = 1
 sigv = 2
-x = arima.sim(n=N, list(ar = c(phi1, phi2), sd=sigw))
+x = arima.sim(n=N, list(ar = c(phi1), sd=sigw))
 y = ts(x[-1] + rnorm(num, 0, sigv))
 
 # SEIR Model
@@ -41,16 +49,22 @@ SEIR <- function(S_0, E_0, I_0, R_0, Tn, alpha, gamma, beta, sig_g, sig_y){
   return(list(S=S, E=E, I=I, R=R, g=g, y=y))
 }
 
+num=100
 pop = 1000
-I_0 = 100
+I_0 = 10
 S_0 = pop - I_0
 E_0 = 0
 R_0 = 0
-alpha = max(rnorm(1, 0.5, 0.5),0)
-gamma = max(rnorm(1, 0.5, 0.5),0)
-beta = max(rnorm(1, 0.5, 0.5),0)
-sig_g = rinvgamma(1, 1.1, 0.005)
-sig_y = rinvgamma(1, 1.1, 0.05)
+# alpha = max(rnorm(1, 0.5, 0.5),0)
+# gamma = max(rnorm(1, 0.5, 0.5),0)
+# beta = max(rnorm(1, 0.5, 0.5),0)
+# sig_g = rinvgamma(1, 1.1, 0.005)
+# sig_y = rinvgamma(1, 1.1, 0.05)
+alpha = 1.5
+gamma = 0.35
+beta = 0.4
+sig_g = 0.3
+sig_y = 0.13
 seir = SEIR(S_0, E_0, I_0, R_0, num, alpha, gamma, beta, sig_g, sig_y)
 
 
@@ -64,34 +78,50 @@ g_df =data.frame(g=seir[['g']], y=seir[['y']], t=seq(1,num))
 g_df = melt(g_df, id='t')
 ggplot(g_df, aes(y=value, x=t, col=variable))+geom_line()
 
-model_averaging <- function(y, freqs=c(1,2,3)) {
+model_averaging <- function(y, init_vals, freqs=c(1,2,3)) {
   num=length(y)
   ar1_params = list()
   model_fit = list()
-  states = list()
+  g = list()
   for(i in 1:length(freqs)){
     ar1_params[[i]] = list()
     model_fit[[i]] = list()
-    states[[i]] = list()
+    g[[i]] = list()
+
     for(j in 1:i){
       y_freq = ts(y[seq(j, num, freqs[i])])
       params_estimate = estimate_params(y_freq)
       ar1_params[[i]][[j]] = params_estimate[['mu']]
       model_fit[[i]][[j]] = posterior_predictive(params_estimate, y_freq)
-      states[[i]][[j]] = rep(NA, length(y))
-      states[[i]][[j]][seq(j, num, freqs[i])] =
+      g[[i]][[j]] = rep(NA, length(y))
+      g[[i]][[j]][seq(j, num, freqs[i])] =
         c(Ksmooth0(length(y_freq), y_freq, A=1, mu0=0, Sigma0=1, ar1_params[[i]][[j]]['phi', 'estimate'],
                ar1_params[[i]][[j]]['sigw', 'estimate'], ar1_params[[i]][[j]]['sigv', 'estimate'])$xs)
 
     }
+    # for(j in 1:length(y)){
+    #   seg_len = max(j, 30)
+    #   y_freq = ts(y[seq(1, seg_len, freqs[i])])
+    #   params_estimate = estimate_params(y_freq)
+    #   ar1_params[[i]][[j]] = params_estimate[['mu']]
+    #   model_fit[[i]][[j]] = posterior_predictive(params_estimate, y_freq)
+    #   states = rep(NA, seg_len)
+    #   states[seq(1, seg_len, freqs[i])] =
+    #       c(Ksmooth0(length(y_freq), y_freq, A=1, mu0=0, Sigma0=1, ar1_params[[i]][[j]]['phi', 'estimate'],
+    #                  ar1_params[[i]][[j]]['sigw', 'estimate'], ar1_params[[i]][[j]]['sigv', 'estimate'])$xs)
+    #   states = na.locf(na.locf(na.approx(states, na.rm=FALSE)), fromLast = TRUE)
+    #   g[[i]][[j]] = states[j]
+    #
+    # }
+
   }
   model_fits = unlist(model_fit)
 
-  states_df = data.frame(states)
-  weighted_states = apply(states_df, MARGIN=1, FUN=function(row){sum(row * exp(-model_fits/2) * !is.na(row), na.rm=T)/
-      sum(exp(-model_fits/2)  * !is.na(row))})
+  states_df = data.frame(g)
+  weighted_states = apply(states_df, MARGIN=1, FUN=function(row){sum(row * exp(-model_fits*2) * !is.na(row), na.rm=T)/
+      sum(exp(-model_fits*2)  * !is.na(row))})
 
-  return (list(ar1_params=ar1_params, model_fit=model_fit, states=states, weighted_states=weighted_states))
+  return (list(ar1_params=ar1_params, model_fit=model_fit, states=g, weighted_states=weighted_states))
 }
 
 
@@ -141,16 +171,7 @@ estimate_params <- function(y) {
 
 results = model_averaging(ts(seir[['y']][2:num]))
 
-y = seir[['y']][2:num]
-x = seir[['g']][1:num]
 
-niter=500
-ar3_model<-bsts(y, AddAr(y=y, lags=3), niter=niter)
-
-plot_df = data.frame(model_averaging=results[['weighted_states']],
-                     true_states=x[2:length(x)], ksmooth=results[['states']][[1]][[1]],
-                     ar3=ar3_model$state.contributions[niter,,],
-                     t=seq(1, length(y)))
 mse_model_averaging=sum((plot_df[, 'model_averaging'] - plot_df[,'true_states'])^2)/length(plot_df)
 mse_ksmooth=sum((plot_df[, 'ksmooth'] - plot_df[,'true_states'])^2)/length(plot_df)
 mse_ar3 = sum((ar3_model$state.contributions[niter,,] - plot_df[,'true_states'])^2)/length(plot_df)
@@ -172,15 +193,26 @@ params_list = list()
 
 for(i in 1:100){
   pop = 1000
-  I_0 = 100
+  I_0 = 10
   S_0 = pop - I_0
   E_0 = 0
   R_0 = 0
-  alpha = max(rnorm(1, 0.5, 0.5),0)
-  gamma = max(rnorm(1, 0.5, 0.5),0)
-  beta = max(rnorm(1, 0.5, 0.5),0)
-  sig_g = rinvgamma(1, 1.1, 0.005)
-  sig_y = rinvgamma(1, 1.1, 0.05)
+  # alpha = alpha#max(rnorm(1, 0.5, 0.5),0)
+  # gamma = gamma#max(rnorm(1, 0.5, 0.5),0)
+  # beta = beta#max(rnorm(1, 0.5, 0.5),0)
+  # sig_g = sig_g#rinvgamma(1, 1.1, 0.005)
+  # sig_y = sig_y#rinvgamma(1, 1.1, 0.05)
+  alpha = 1.5
+  gamma = 0.35
+  beta = 0.4
+  sig_g = 0.3
+  sig_y = 0.13
+  # alpha = 1.5/2
+  # gamma = 0.3/2
+  # beta = 0.8/2
+  # sig_g = 0.3/2
+  # sig_y = 0.13/2
+
 
   params_list[[i]]= list(alpha=alpha, gamma=gamma, beta=beta, sig_g=sig_g, sig_y=sig_y)
   seir_states = SEIR(S_0, E_0, I_0, R_0, num, alpha, gamma, beta, sig_g, sig_y)
@@ -191,37 +223,33 @@ for(i in 1:100){
 
   results <- tryCatch(
     model_averaging(ts(y), freqs=c(1,2,3)),
-    error=function(e) e
+    error=function(e) print(e)
   )
 
-  niter=500
-  ar3_model<-tryCatch(bsts(y, AddAr(y=y, lags=3), niter=niter),
+  par = estimate_params(ts(y))[['mu']]
+  ksmooth_states = tryCatch(
+    c(Ksmooth0(length(y), y, A=1, mu0=0, Sigma0=1, par['phi', 'estimate'],
+               par['sigw', 'estimate'],par['sigv', 'estimate'])$xs),
+    error=function(e) print(e))
+
+  ar3_model<-tryCatch(bsts(y, AddAr(y=y, lags=3), niter=500),
                       error=function(e) e)
 
 
   if(!inherits(results, "error")){
-    results_df = data.frame(model_averaging=results[['weighted_states']], true_states=x[2:length(x)],
-                            ksmooth=results[['states']][[1]][[1]])
-    mse_model_averaging_list[[i]]=sum((results_df[, 'model_averaging'] - results_df[,'true_states'])^2)/length(results_df)
-    mse_ksmooth_list[[i]]=sum((results_df[, 'ksmooth'] - results_df[,'true_states'])^2)/length(results_df)
+     results_df = data.frame(model_averaging=results[['weighted_states']], true_states=x[2:length(x)])
+     mse_model_averaging_list[[i]]=sum((results_df[, 'model_averaging'] - results_df[,'true_states'])^2)/length(results_df)
 
   } else {
     mse_model_averaging_list[[i]] = NA
+  }
 
-    ksmooth_states = tryCatch(
-      c(Ksmooth0(length(y), y, A=1, mu0=0, Sigma0=1, results[['ar1_params']][[1]][[1]]['phi', 'estimate'],
-                 results[['ar1_params']][[1]][[1]]['sigw', 'estimate'],
-                 results[['ar1_params']][[1]][[1]]['sigv', 'estimate'])$xs),
-      error=function(e) e
-
-    )
-    if(!inherits(ksmooth_states, "error")){
+  if(!inherits(ksmooth_states, "error")){
       results_df = data.frame(true_states=x[2:length(x)], ksmooth=ksmooth_states)
       mse_ksmooth_list[[i]]=sum((results_df[, 'ksmooth'] - results_df[,'true_states'])^2)/length(results_df)
 
-    } else {
+  } else {
       mse_ksmooth_list[[i]] = NA
-    }
   }
 
   if(!inherits(ar3_model, "error")){
@@ -235,7 +263,20 @@ for(i in 1:100){
 
 df = data.frame(ksmooth=unlist(mse_ksmooth_list), model_average=unlist(mse_model_averaging_list),
                 ar3=unlist(mse_ar3_list))
-df['winner'] = apply(df, MARGIN=1, FUN=function(row) colnames(df)[which(row==min(row, na.rm=TRUE))])
-ggplot(df, aes(x=winner)) + geom_bar()
+mean_df = melt(apply(df, MARGIN=2, function(x) mean(x, na.rm=TRUE)))
+mean_df['model'] = row.names(mean_df)
+ggplot(mean_df, aes(x=model, y=value, fill=model)) + geom_bar(stat = 'identity', alpha=0.25)
+
+ggplot(melt(df), aes(x=value, fill=variable)) + geom_density(alpha=0.25)+ xlim(0, 2)
+ggplot(melt(df) ,aes(x=value, fill=variable)) + geom_histogram(alpha=0.25) + xlim(0, 2)
+
+error_df = melt(apply(df, MARGIN=2, function(x) mean(is.na(x), na.rm=TRUE)))
+error_df['model'] = row.names(error_df)
+ggplot(error_df, aes(x=model, y=value, fill=model)) + geom_bar(stat = 'identity', alpha=0.25)
+
+
+df = df[rowSums(is.na(df)) < 3, ]
+df['winner'] = unlist(apply(df, MARGIN=1, FUN=function(row) colnames(df)[which(row==min(row, na.rm=TRUE))]))
+ggplot(df, aes(x=winner, fill=winner)) + geom_bar(alpha=0.25)
 
 
