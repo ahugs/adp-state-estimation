@@ -47,7 +47,7 @@ ModelAveraging <- function(y, seir_params, freqs=c(1, 2, 3), niter=500, weight_f
 #     },
 #     error=function(e) {print(e)}
 #   )
-#   return(list(g=g, model_fit=model_fit/N))
+#   return(list(g=g, model_fit=-(freq*log(length(y)) + 2*model_fit)))
 # }
 
 
